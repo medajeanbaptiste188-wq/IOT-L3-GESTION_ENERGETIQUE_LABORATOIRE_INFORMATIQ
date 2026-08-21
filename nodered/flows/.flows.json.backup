@@ -1,0 +1,274 @@
+[
+    {
+        "id": "f60b1cd2f9264b44",
+        "type": "tab",
+        "label": "Flux 1",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "2ea061b07d8cb3d1",
+        "type": "mqtt-broker",
+        "name": "HiveMQ Public",
+        "broker": "broker.hivemq.com",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "d3411ac1a2e32b55",
+        "type": "influxdb",
+        "hostname": "127.0.0.1",
+        "port": 8086,
+        "protocol": "http",
+        "database": "database",
+        "name": "",
+        "usetls": false,
+        "tls": "",
+        "influxdbVersion": "2.0",
+        "url": "http://influxdb:8086",
+        "timeout": "5",
+        "rejectUnauthorized": true
+    },
+    {
+        "id": "mqtt_broker_shared",
+        "type": "mqtt-broker",
+        "name": "HiveMQ Public",
+        "broker": "broker.hivemq.com",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthQos": "0",
+        "willQos": "0"
+    },
+    {
+        "id": "node_mqtt_capteurs",
+        "type": "mqtt in",
+        "z": "f60b1cd2f9264b44",
+        "name": "mqtt In",
+        "topic": "ufhb/grp_c/capteurs/#",
+        "qos": "1",
+        "datatype": "auto-detect",
+        "broker": "mqtt_broker_shared",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 110,
+        "y": 380,
+        "wires": [
+            [
+                "fn_parser_capteurs",
+                "debug_brut"
+            ]
+        ]
+    },
+    {
+        "id": "fn_parser_capteurs",
+        "type": "function",
+        "z": "f60b1cd2f9264b44",
+        "name": "Parser JSON pour InfluxDB",
+        "func": "// ==========================================================\n// NŒUD FUNCTION : Parser JSON pour InfluxDB (Capteurs) - CORRIGÉ\n// ==========================================================\n\nconst topicParts = msg.topic.split('/');\nconst typeMesure = topicParts[topicParts.length - 1]; // \"temperature\", \"courant\", etc.\nconst login = topicParts[1];                          // \"grp_c\"\nconst valeur = parseFloat(msg.payload);\n\n// Sécurité : Vérification du format numérique\nif (isNaN(valeur) || !isFinite(valeur)) {\n    node.error(\"❌ Valeur non numérique: \" + msg.payload);\n    return null;\n}\n\n// Sécurité : Vérification du type de mesure\nif (!typeMesure || typeMesure === '') {\n    node.error(\"❌ Type de mesure vide\");\n    return null;\n}\n\n// FORMAT CONFORME INFLUXDB V2 (Case Measurement vide dans l'UI)\nmsg.measurement = typeMesure; // Placé à la racine pour que le nœud le trouve direct !\nmsg.tags = {\n    capteur: login,\n    site: 'campus_ufhb'\n};\nmsg.payload = {\n    valeur: valeur // InfluxDB prendra automatiquement les clés du payload comme \"fields\"\n};\n\nnode.log(\"✅ \" + msg.measurement + \" = \" + valeur);\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 440,
+        "y": 380,
+        "wires": [
+            [
+                "node_influx_final",
+                "debug_formate"
+            ]
+        ]
+    },
+    {
+        "id": "node_mqtt_alertes",
+        "type": "mqtt in",
+        "z": "f60b1cd2f9264b44",
+        "name": "Souscription Alertes",
+        "topic": "ufhb/grp_c/alertes",
+        "qos": "1",
+        "datatype": "auto-detect",
+        "broker": "mqtt_broker_shared",
+        "inputs": 0,
+        "x": 170,
+        "y": 560,
+        "wires": [
+            [
+                "node_json_parser"
+            ]
+        ]
+    },
+    {
+        "id": "node_json_parser",
+        "type": "json",
+        "z": "f60b1cd2f9264b44",
+        "name": "Parseur JSON",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 460,
+        "y": 560,
+        "wires": [
+            [
+                "fn_parser_alertes",
+                "04804a61e29c1187"
+            ]
+        ]
+    },
+    {
+        "id": "fn_parser_alertes",
+        "type": "function",
+        "z": "f60b1cd2f9264b44",
+        "name": "Formater Alertes",
+        "func": "let alerte = msg.payload; \n\n// SÉCURITÉ : Si le payload est reçu sous forme de texte (string), on le convertit en objet\nif (typeof alerte === 'string') {\n    try {\n        alerte = JSON.parse(alerte);\n    } catch(e) {\n        return null; // On ignore si ce n'est pas du JSON valide\n    }\n}\n\n// On tente maintenant de convertir les valeurs en nombres décimaux\nconst valeurNum = parseFloat(alerte.valeur);\nconst seuilNum = parseFloat(alerte.seuil);\n\n// SÉCURITÉ ANTI-NaN\nif (isNaN(valeurNum) || isNaN(seuilNum)) {\n    node.warn(\"⚠️ Alerte ignorée pour InfluxDB (Données numériques invalides) : \" + JSON.stringify(alerte));\n    return null; \n}\n\n// FORMAT CONFORME INFLUXDB V2\nmsg.measurement = \"alertes\"; \nmsg.tags = {\n    type_anomalie: alerte.type || \"inconnu\",\n    capteur: \"grp_c\",\n    site: 'campus_ufhb'\n};\n\nmsg.payload = {\n    valeur: valeurNum,\n    seuil: seuilNum,\n    message: alerte.message || \"Aucun message\"\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 800,
+        "y": 480,
+        "wires": [
+            [
+                "node_influx_final"
+            ]
+        ]
+    },
+    {
+        "id": "node_influx_final",
+        "type": "influxdb out",
+        "z": "f60b1cd2f9264b44",
+        "influxdb": "d3411ac1a2e32b55",
+        "name": "influxdb out",
+        "measurement": "",
+        "precision": "ms",
+        "retentionPolicy": "",
+        "database": "",
+        "precisionV18FluxV20": "ms",
+        "retentionPolicyV18Flux": "",
+        "org": "ufhb",
+        "bucket": "capteurs_grp_c_v2",
+        "x": 830,
+        "y": 380,
+        "wires": []
+    },
+    {
+        "id": "debug_brut",
+        "type": "debug",
+        "z": "f60b1cd2f9264b44",
+        "name": "Afficher payload brut",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 240,
+        "y": 480,
+        "wires": []
+    },
+    {
+        "id": "debug_formate",
+        "type": "debug",
+        "z": "f60b1cd2f9264b44",
+        "name": "Afficher payload formaté",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 530,
+        "y": 480,
+        "wires": []
+    },
+    {
+        "id": "04804a61e29c1187",
+        "type": "function",
+        "z": "f60b1cd2f9264b44",
+        "name": "Préparer le Mail",
+        "func": "let alerte = msg.payload;\n\n// SÉCURITÉ : Si le payload est reçu sous forme de texte (string), on le convertit en objet\nif (typeof alerte === 'string') {\n    try {\n        alerte = JSON.parse(alerte);\n    } catch (e) {\n        node.error(\"Erreur critique : Impossible de décoder le JSON du mail.\");\n        return null;\n    }\n}\n\n// 💡 DÉTECTION AUTOMATIQUE DE L'UNITÉ\nlet unite = \"\";\nconst typeLower = alerte.type ? alerte.type.toLowerCase() : \"\";\n\nif (typeLower.includes(\"temp\")) {\n    unite = \" °C\";\n} else if (typeLower.includes(\"hum\")) {\n    unite = \" %\";\n} else if (typeLower.includes(\"courant\") || typeLower.includes(\"amp\")) {\n    unite = \" mA\"; // Change en \" A\" si ton ESP32 envoie directement des Ampères\n} else if (typeLower.includes(\"tension\") || typeLower.includes(\"volt\")) {\n    unite = \" V\";\n} else if (typeLower.includes(\"lum\")) {\n    unite = \" lux\";\n}\n\n// 1. On définit le sujet du mail\nconst typeAlerte = alerte.type ? alerte.type.toUpperCase() : \"INCONNU\";\nmsg.topic = `🚨 ALERTE CRITIQUE : Anomalie ${typeAlerte} détectée !`;\n\n// 2. On écrit le corps du mail avec les unités dynamiques\nmsg.payload = `Bonjour l'administrateur,\\n\\n` +\n    `Une anomalie a été détectée sur le système de surveillance du Campus UFHB.\\n\\n` +\n    ` DÉTAILS DE L'ALERTE :\\n` +\n    `----------------------------------------\\n` +\n    `• Type de capteur : ${alerte.type || \"Non spécifié\"}\\n` +\n    `• Valeur mesurée : ${alerte.valeur ?? \"N/A\"}${unite}\\n` +\n    `• Seuil critique : ${alerte.seuil ?? \"N/A\"}${unite}\\n` +\n    `• Message d'erreur : ${alerte.message || \"Aucun détail\"}\\n` +\n    `----------------------------------------\\n\\n` +\n    `Veuillez vérifier l'état du laboratoire ou les graphiques sur Grafana (http://localhost:3000).\\n\\n` +\n    `Ceci est un message automatique envoyé par Node-RED.`;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 740,
+        "y": 560,
+        "wires": [
+            [
+                "5aaa5b9490f4845c",
+                "35282821b552fd4c"
+            ]
+        ]
+    },
+    {
+        "id": "5aaa5b9490f4845c",
+        "type": "e-mail",
+        "z": "f60b1cd2f9264b44",
+        "server": "smtp.gmail.com",
+        "port": "465",
+        "authtype": "BASIC",
+        "saslformat": true,
+        "token": "oauth2Response.access_token",
+        "secure": true,
+        "tls": true,
+        "name": "medajeanbaptiste188@gmail.com, toureerica43@gmail.com, yhermannulrich@gmail.com, konatengolo@ufhb.edu.ci",
+        "dname": "email",
+        "x": 610,
+        "y": 660,
+        "wires": []
+    },
+    {
+        "id": "35282821b552fd4c",
+        "type": "debug",
+        "z": "f60b1cd2f9264b44",
+        "name": "email debug",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 790,
+        "y": 660,
+        "wires": []
+    }
+]

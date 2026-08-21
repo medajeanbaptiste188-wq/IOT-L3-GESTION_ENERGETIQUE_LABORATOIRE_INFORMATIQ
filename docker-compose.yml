@@ -1,0 +1,72 @@
+# iot-pipeline/docker-compose.yml
+version: '3.8'
+
+# --- Réseau interne pour la communication entre conteneurs ---
+networks:
+  iot-network:
+    driver: bridge
+
+# --- Volumes persistants pour ne pas perdre les données ---
+volumes:
+  influxdb-data:
+  grafana-data:
+
+services:
+  # ----- 1. BROKER MQTT (Mosquitto) -----
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"   # Port MQTT standard
+      - "9001:9001"   # Port WebSocket (optionnel, utile pour MQTTX Web)
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+    networks:
+      - iot-network
+
+  # ----- 2. BASE DE DONNEES (InfluxDB) -----
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"   # Port de l'API HTTP
+    env_file:
+      - ./influxdb/.env
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    networks:
+      - iot-network
+
+  # ----- 3. ETL (Node-RED) -----
+  node-red:
+    image: nodered/node-red:latest
+    container_name: node-red
+    restart: unless-stopped
+    ports:
+      - "1880:1880"   # Port de l'interface Node-RED
+    volumes:
+      - ./nodered/flows:/data
+    depends_on:
+      - mosquitto
+      - influxdb
+    networks:
+      - iot-network
+
+  # ----- 4. DASHBOARD (Grafana) -----
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"   # Port de l'interface Grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=ufhb2025  # Mot de passe admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - influxdb
+    networks:
+      - iot-network
